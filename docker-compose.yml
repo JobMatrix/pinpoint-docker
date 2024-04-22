@@ -83,8 +83,14 @@ services:
       - "9997"
     ports:
       - "9997:9997"
-      - "${WEB_SERVER_PORT:-8080}:8080"
+      - "${WEB_SERVER_PORT:-8080}:${WEB_SERVER_PORT:-8080}"
     environment:
+      - VIRTUAL_HOST=monitoring@ezyapply.ai
+      - LETSENCRYPT_HOST=monitoring@ezyapply.ai
+      - VIRTUAL_HOST=monitoring@ezyapply.ai
+      - LETSENCRYPT_EMAIL=info@ezyapply.ai
+      - VIRTUAL_PORT=${WEB_SERVER_PORT}
+      - VIRTUAL_PATH=/
       - WEB_SERVER_PORT=${WEB_SERVER_PORT}
       - SPRING_PROFILES_ACTIVE=${SPRING_PROFILES}
       - PINPOINT_ZOOKEEPER_ADDRESS=${PINPOINT_ZOOKEEPER_ADDRESS}
@@ -107,11 +113,47 @@ services:
       - SPRING_DATA_REDIS_PORT=${SPRING_DATA_REDIS_PORT}
       - SPRING_DATA_REDIS_USERNAME=${SPRING_DATA_REDIS_USERNAME}
       - SPRING_DATA_REDIS_PASSWORD=${SPRING_DATA_REDIS_PASSWORD}
-
     links:
       - "pinpoint-mysql:pinpoint-mysql"
     networks:
       - pinpoint
+
+  web:
+    image: jwilder/nginx-proxy
+    container_name: web
+    environment:
+      DHPARAM_GENERATIONL: "false"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - conf:/etc/nginx/conf.d
+      - certs:/etc/nginx/certs:ro
+      - vhost:/etc/nginx/vhost.d
+      - html:/usr/share/nginx/html
+      - /var/run/docker.sock:/tmp/docker.sock:ro
+      - ./nginx/metrics.conf:/etc/nginx/conf.d/metrics.conf
+    networks:
+      - pinpoint
+    restart: unless-stopped
+
+  acme-companion:
+    image: nginxproxy/acme-companion
+    container_name: nginx-proxy-acme
+    environment:
+      DHPARAM_GENERATIONL: "false"
+      DEFAULT_EMAIL: info@timestone.ap
+      NGINX_PROXY_CONTAINER: web
+    volumes:
+      - conf:/etc/nginx/conf.d
+      - certs:/etc/nginx/certs:rw
+      - vhost:/etc/nginx/vhost.d
+      - html:/usr/share/nginx/html
+      - acme:/etc/acme.sh
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - pinpoint
+  
 
   pinpoint-collector:
     container_name: "${PINPOINT_COLLECTOR_NAME}"
@@ -152,24 +194,6 @@ services:
       - SPRING_DATA_REDIS_PORT=${SPRING_DATA_REDIS_PORT}
       - SPRING_DATA_REDIS_USERNAME=${SPRING_DATA_REDIS_USERNAME}
       - SPRING_DATA_REDIS_PASSWORD=${SPRING_DATA_REDIS_PASSWORD}
-
-  pinpoint-quickstart:
-    build:
-      context: ./pinpoint-quickstart/
-      dockerfile: Dockerfile
-
-    container_name: "pinpoint-quickstart"
-    image: "pinpointdocker/pinpoint-quickstart"
-    ports:
-      - "${APP_PORT:-8085}:8080"
-    volumes:
-      - data-volume:/pinpoint-agent
-    environment:
-      JAVA_OPTS: "-javaagent:/pinpoint-agent/pinpoint-bootstrap.jar -Dpinpoint.agentId=${AGENT_ID} -Dpinpoint.applicationName=${APP_NAME} -Dpinpoint.profiler.profiles.active=${SPRING_PROFILES}"
-    networks:
-      - pinpoint
-    depends_on:
-      - pinpoint-agent
 
   pinpoint-batch:
     container_name: "${PINPOINT_BATCH_NAME}"
@@ -214,31 +238,6 @@ services:
       - "pinpoint-mysql:pinpoint-mysql"
     networks:
       - pinpoint
-
-  pinpoint-agent:
-    container_name: "${PINPOINT_AGENT_NAME}"
-    image: "pinpointdocker/pinpoint-agent:${PINPOINT_VERSION}"
-    restart: unless-stopped
-    networks:
-      - pinpoint
-    volumes:
-      - data-volume:/pinpoint-agent
-    environment:
-      - SPRING_PROFILES=${SPRING_PROFILES}
-      - COLLECTOR_IP=${COLLECTOR_IP}
-      - PROFILER_TRANSPORT_AGENT_COLLECTOR_PORT=${PROFILER_TRANSPORT_AGENT_COLLECTOR_PORT}
-      - PROFILER_TRANSPORT_METADATA_COLLECTOR_PORT=${PROFILER_TRANSPORT_METADATA_COLLECTOR_PORT}
-      - PROFILER_TRANSPORT_STAT_COLLECTOR_PORT=${PROFILER_TRANSPORT_STAT_COLLECTOR_PORT}
-      - PROFILER_TRANSPORT_SPAN_COLLECTOR_PORT=${PROFILER_TRANSPORT_SPAN_COLLECTOR_PORT}
-      - PROFILER_SAMPLING_TYPE=${PROFILER_SAMPLING_TYPE}
-      - PROFILER_SAMPLING_COUNTING_SAMPLING_RATE=${PROFILER_SAMPLING_COUNTING_SAMPLING_RATE}
-      - PROFILER_SAMPLING_PERCENT_SAMPLING_RATE=${PROFILER_SAMPLING_PERCENT_SAMPLING_RATE}
-      - PROFILER_SAMPLING_NEW_THROUGHPUT=${PROFILER_SAMPLING_NEW_THROUGHPUT}
-      - PROFILER_SAMPLING_CONTINUE_THROUGHPUT=${PROFILER_SAMPLING_CONTINUE_THROUGHPUT}
-      - DEBUG_LEVEL=${AGENT_DEBUG_LEVEL}
-      - PROFILER_TRANSPORT_MODULE=${PROFILER_TRANSPORT_MODULE}
-    depends_on:
-      - pinpoint-collector
 
   #zookeepers
   zoo1:
@@ -339,6 +338,11 @@ services:
 
     
 volumes:
+  conf:
+  vhost:
+  html:
+  certs:
+  acme:
   data-volume:
   mysql_data:
   hbase_data:
